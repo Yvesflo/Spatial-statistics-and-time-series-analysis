@@ -1,0 +1,258 @@
+# ARIMA MODELING - TEMPERATURE DATA
+# =================================
+# Educational exercise for ARIMA model fitting and validation
+# Focus: Stationarity testing, model identification, diagnostics
+
+# Learning objectives:
+# - Test for stationarity using ADF test
+# - Identify ARIMA parameters (p,d,q)
+# - Fit and validate ARIMA models
+# - Interpret model diagnostics
+
+# Load required packages
+library(forecast)
+library(tseries)
+library(ggplot2)
+
+# =================================
+# 1. DATA LOADING AND EXPLORATION
+# =================================
+
+# Load Nottingham temperature data
+data(nottem)
+temperature <- nottem
+
+# Basic information
+cat("=== TEMPERATURE DATA OVERVIEW ===\n")
+cat("Data period:", start(temperature), "to", end(temperature), "\n")
+cat("Frequency:", frequency(temperature), "\n")
+cat("Length:", length(temperature), "observations\n")
+
+# Initial visualization
+plot(temperature, 
+     main = "Nottingham Temperature Series",
+     xlab = "Year", 
+     ylab = "Temperature (°F)",
+     col = "blue", 
+     lwd = 2)
+
+# =================================
+# 2. STATIONARITY ASSESSMENT
+# =================================
+
+cat("\n=== STATIONARITY ANALYSIS ===\n")
+
+# Visual inspection using ACF/PACF
+par(mfrow = c(2, 1))
+acf(temperature, main = "ACF - Original Series")
+pacf(temperature, main = "PACF - Original Series")
+par(mfrow = c(1, 1))
+
+# Augmented Dickey-Fuller test
+adf_result <- adf.test(temperature)
+cat("ADF Test Results:\n")
+cat("Test statistic:", adf_result$statistic, "\n")
+cat("P-value:", adf_result$p.value, "\n")
+
+# Interpretation
+if (adf_result$p.value < 0.05) {
+  cat("Conclusion: Series is STATIONARY (p < 0.05)\n")
+} else {
+  cat("Conclusion: Series is NON-STATIONARY (p >= 0.05)\n")
+}
+
+# =================================
+# 3. DIFFERENCING (IF NEEDED)
+# =================================
+
+# Even if series appears stationary, demonstrate differencing
+cat("\n=== DIFFERENCING ANALYSIS ===\n")
+
+# First difference
+temp_diff1 <- diff(temperature, differences = 1)
+plot(temp_diff1, 
+     main = "First Differenced Temperature Series",
+     xlab = "Year", 
+     ylab = "Temperature Difference",
+     col = "red", 
+     lwd = 2)
+
+# Test stationarity of differenced series
+adf_diff <- adf.test(temp_diff1)
+cat("ADF Test on Differenced Series:\n")
+cat("P-value:", adf_diff$p.value, "\n")
+
+# ACF/PACF of differenced series
+par(mfrow = c(2, 1))
+acf(temp_diff1, main = "ACF - First Differenced")
+pacf(temp_diff1, main = "PACF - First Differenced")
+par(mfrow = c(1, 1))
+
+# =================================
+# 4. MODEL IDENTIFICATION
+# =================================
+
+cat("\n=== MODEL IDENTIFICATION ===\n")
+
+# Auto-correlation analysis for model selection
+# Look for patterns in ACF and PACF to determine p and q
+
+# Guidelines:
+# - AR(p): PACF cuts off at lag p, ACF decays exponentially
+# - MA(q): ACF cuts off at lag q, PACF decays exponentially
+# - ARMA(p,q): Both ACF and PACF decay exponentially
+
+cat("Model Selection Guidelines:\n")
+cat("- AR model: PACF cuts off sharply, ACF decays slowly\n")
+cat("- MA model: ACF cuts off sharply, PACF decays slowly\n")
+cat("- ARMA model: Both ACF and PACF decay exponentially\n")
+
+# =================================
+# 5. MANUAL MODEL FITTING
+# =================================
+
+cat("\n=== MANUAL MODEL FITTING ===\n")
+
+# Try different ARIMA models
+# Since original series appears stationary, try ARIMA(p,0,q)
+
+# Model 1: ARIMA(1,0,0) - AR(1)
+model_ar1 <- Arima(temperature, order = c(1, 0, 0))
+cat("ARIMA(1,0,0) - AIC:", AIC(model_ar1), "\n")
+
+# Model 2: ARIMA(0,0,1) - MA(1)
+model_ma1 <- Arima(temperature, order = c(0, 0, 1))
+cat("ARIMA(0,0,1) - AIC:", AIC(model_ma1), "\n")
+
+# Model 3: ARIMA(1,0,1) - ARMA(1,1)
+model_arma11 <- Arima(temperature, order = c(1, 0, 1))
+cat("ARIMA(1,0,1) - AIC:", AIC(model_arma11), "\n")
+
+# Model 4: Higher order model
+model_ar2 <- Arima(temperature, order = c(2, 0, 0))
+cat("ARIMA(2,0,0) - AIC:", AIC(model_ar2), "\n")
+
+# =================================
+# 6. AUTOMATIC MODEL SELECTION
+# =================================
+
+cat("\n=== AUTOMATIC MODEL SELECTION ===\n")
+
+# Use auto.arima for comparison
+auto_model <- auto.arima(temperature)
+cat("Auto-selected model:", auto_model$arma[c(1, 6, 2)], "\n")
+cat("Auto model AIC:", AIC(auto_model), "\n")
+
+# Display model summary
+summary(auto_model)
+
+# =================================
+# 7. MODEL DIAGNOSTICS
+# =================================
+
+cat("\n=== MODEL DIAGNOSTICS ===\n")
+
+# Choose best model based on AIC (lowest value)
+best_model <- auto_model  # or choose manually based on AIC comparison
+
+# Comprehensive residual analysis
+checkresiduals(best_model)
+
+# Additional diagnostic tests
+residuals <- residuals(best_model)
+
+# Test for remaining autocorrelation
+box_test <- Box.test(residuals, lag = 20, type = "Ljung-Box")
+cat("Ljung-Box test p-value:", box_test$p.value, "\n")
+
+if (box_test$p.value > 0.05) {
+  cat("Residuals appear to be white noise (good!)\n")
+} else {
+  cat("Residuals show significant autocorrelation (needs improvement)\n")
+}
+
+# Test for normality of residuals
+shapiro_test <- shapiro.test(residuals)
+cat("Shapiro-Wilk normality test p-value:", shapiro_test$p.value, "\n")
+
+# =================================
+# 8. MODEL PERFORMANCE
+# =================================
+
+cat("\n=== MODEL PERFORMANCE ===\n")
+
+# In-sample fit
+fitted_values <- fitted(best_model)
+accuracy_stats <- accuracy(best_model)
+print(accuracy_stats)
+
+# Plot fitted vs actual
+plot(temperature, main = "Actual vs Fitted Values", 
+     ylab = "Temperature", col = "blue", lwd = 2)
+lines(fitted_values, col = "red", lwd = 2)
+legend("bottomright", legend = c("Actual", "Fitted"), 
+       col = c("blue", "red"), lwd = 2)
+
+# =================================
+# 9. FORECASTING EXAMPLE
+# =================================
+
+cat("\n=== FORECASTING EXAMPLE ===\n")
+
+# Generate forecasts
+forecast_horizon <- 24  # 2 years of monthly data
+forecasts <- forecast(best_model, h = forecast_horizon)
+
+# Plot forecasts
+plot(forecasts, main = "Temperature Forecasts", 
+     xlab = "Year", ylab = "Temperature (°F)")
+
+# Extract forecast values
+forecast_values <- as.numeric(forecasts$mean)
+cat("Next 12 months forecast (mean):\n")
+print(round(forecast_values[1:12], 2))
+
+# =================================
+# 10. MODEL COMPARISON FUNCTION
+# =================================
+
+compare_models <- function(models, model_names) {
+  cat("\n=== MODEL COMPARISON ===\n")
+  
+  comparison <- data.frame(
+    Model = model_names,
+    AIC = sapply(models, AIC),
+    BIC = sapply(models, BIC),
+    LogLik = sapply(models, logLik)
+  )
+  
+  # Sort by AIC
+  comparison <- comparison[order(comparison$AIC), ]
+  print(comparison)
+  
+  cat("\nBest model by AIC:", comparison$Model[1], "\n")
+  return(comparison)
+}
+
+# Compare all fitted models
+model_list <- list(model_ar1, model_ma1, model_arma11, model_ar2, auto_model)
+model_names <- c("ARIMA(1,0,0)", "ARIMA(0,0,1)", "ARIMA(1,0,1)", 
+                "ARIMA(2,0,0)", "Auto-ARIMA")
+
+comparison_results <- compare_models(model_list, model_names)
+
+# =================================
+# 11. SUMMARY AND LEARNING POINTS
+# =================================
+
+cat("\n=== SUMMARY AND LEARNING POINTS ===\n")
+cat("1. Always test for stationarity before fitting ARIMA models\n")
+cat("2. Use ACF/PACF plots to identify potential model orders\n")
+cat("3. Compare multiple models using information criteria (AIC, BIC)\n")
+cat("4. Validate models through residual analysis\n")
+cat("5. Check for white noise residuals using Ljung-Box test\n")
+cat("6. Auto-ARIMA provides good starting point but manual selection may be better\n")
+cat("7. Lower AIC generally indicates better model fit\n")
+cat("8. Residuals should be normally distributed and uncorrelated\n")
+
+cat("\nExercise completed! Try with other time series datasets.\n")
