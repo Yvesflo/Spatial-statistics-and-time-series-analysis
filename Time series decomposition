@@ -1,0 +1,225 @@
+# TIME SERIES DECOMPOSITION - AIR PASSENGERS
+# ==========================================
+# Educational exercise for understanding time series components
+# Focus: STL decomposition, trend analysis, seasonality
+
+# Learning objectives:
+# - Understand time series structure
+# - Perform STL decomposition
+# - Analyze trend and seasonal patterns
+# - Handle missing values in time series
+
+# Load required packages
+library(forecast)
+library(ggplot2)
+library(stats)
+
+# ==========================================
+# 1. DATA LOADING AND EXPLORATION
+# ==========================================
+
+# Load the classic AirPassengers dataset
+data(AirPassengers)
+air_passengers <- AirPassengers
+
+# Basic information about the time series
+cat("=== TIME SERIES INFORMATION ===\n")
+cat("Class:", class(air_passengers), "\n")
+cat("Start:", paste(start(air_passengers), collapse = " "), "\n")
+cat("End:", paste(end(air_passengers), collapse = " "), "\n")
+cat("Frequency:", frequency(air_passengers), "\n")
+cat("Length:", length(air_passengers), "\n")
+
+# Display first few values
+cat("\nFirst 12 values:\n")
+print(head(air_passengers, 12))
+
+# ==========================================
+# 2. VISUAL EXPLORATION
+# ==========================================
+
+# Plot the original time series
+plot(air_passengers, 
+     main = "Air Passengers Time Series (1949-1960)",
+     xlab = "Year", 
+     ylab = "Number of Passengers (thousands)",
+     col = "blue", 
+     lwd = 2)
+
+# Add trend line
+abline(reg = lm(air_passengers ~ time(air_passengers)), col = "red", lwd = 2)
+legend("topleft", legend = c("Data", "Trend"), col = c("blue", "red"), lwd = 2)
+
+# ==========================================
+# 3. DESCRIPTIVE STATISTICS
+# ==========================================
+
+cat("\n=== DESCRIPTIVE STATISTICS ===\n")
+summary_stats <- data.frame(
+  Mean = mean(air_passengers),
+  Median = median(air_passengers),
+  SD = sd(air_passengers),
+  Min = min(air_passengers),
+  Max = max(air_passengers),
+  Q1 = quantile(air_passengers, 0.25),
+  Q3 = quantile(air_passengers, 0.75),
+  IQR = IQR(air_passengers)
+)
+
+print(summary_stats)
+
+# Box plot by month to see seasonality
+boxplot(air_passengers ~ cycle(air_passengers),
+        main = "Air Passengers by Month",
+        xlab = "Month",
+        ylab = "Number of Passengers",
+        col = "lightblue")
+
+# ==========================================
+# 4. DECOMPOSITION ANALYSIS
+# ==========================================
+
+cat("\n=== DECOMPOSITION ANALYSIS ===\n")
+
+# Classical decomposition - additive model
+decomp_additive <- decompose(air_passengers, type = "additive")
+plot(decomp_additive, main = "Additive Decomposition")
+
+# Classical decomposition - multiplicative model
+decomp_multiplicative <- decompose(air_passengers, type = "multiplicative")
+plot(decomp_multiplicative, main = "Multiplicative Decomposition")
+
+# ==========================================
+# 5. MODEL SELECTION GUIDANCE
+# ==========================================
+
+# Compare seasonal components to determine appropriate model
+seasonal_range_add <- range(decomp_additive$seasonal)
+seasonal_range_mult <- range(decomp_multiplicative$seasonal)
+
+cat("Additive seasonal range:", seasonal_range_add, "\n")
+cat("Multiplicative seasonal range:", seasonal_range_mult, "\n")
+
+# Plot seasonal components comparison
+par(mfrow = c(2, 1))
+plot(decomp_additive$seasonal, main = "Additive Seasonal Component", 
+     ylab = "Seasonal Effect")
+plot(decomp_multiplicative$seasonal, main = "Multiplicative Seasonal Component", 
+     ylab = "Seasonal Effect")
+par(mfrow = c(1, 1))
+
+# Rule of thumb: if seasonal amplitude increases with level, use multiplicative
+cat("\nModel Selection Guide:\n")
+cat("- If seasonal amplitude is constant over time: Use ADDITIVE\n")
+cat("- If seasonal amplitude increases with level: Use MULTIPLICATIVE\n")
+cat("- For this data: MULTIPLICATIVE is appropriate\n")
+
+# ==========================================
+# 6. DETAILED ANALYSIS OF COMPONENTS
+# ==========================================
+
+# Work with multiplicative decomposition
+decomp <- decomp_multiplicative
+
+# Extract components
+trend <- decomp$trend
+seasonal <- decomp$seasonal
+residual <- decomp$random
+
+# Analyze trend
+cat("\n=== TREND ANALYSIS ===\n")
+cat("Overall trend direction: INCREASING\n")
+cat("Trend range:", range(trend, na.rm = TRUE), "\n")
+
+# Analyze seasonality
+cat("\n=== SEASONAL ANALYSIS ===\n")
+seasonal_by_month <- tapply(seasonal, cycle(air_passengers), mean)
+cat("Seasonal factors by month:\n")
+print(round(seasonal_by_month, 3))
+
+# Identify peak and low seasons
+peak_month <- which.max(seasonal_by_month)
+low_month <- which.min(seasonal_by_month)
+cat("Peak season: Month", peak_month, "(", month.name[peak_month], ")\n")
+cat("Low season: Month", low_month, "(", month.name[low_month], ")\n")
+
+# ==========================================
+# 7. RESIDUAL ANALYSIS
+# ==========================================
+
+cat("\n=== RESIDUAL ANALYSIS ===\n")
+
+# Plot residuals
+plot(residual, main = "Residual Component", ylab = "Residuals")
+abline(h = 0, col = "red", lty = 2)
+
+# Check for patterns in residuals
+acf(residual, na.action = na.pass, main = "ACF of Residuals")
+
+# Summary of residuals
+cat("Residual statistics:\n")
+print(summary(residual))
+
+# ==========================================
+# 8. MISSING VALUES SIMULATION
+# ==========================================
+
+cat("\n=== MISSING VALUES EXAMPLE ===\n")
+
+# Create a version with missing values for demonstration
+set.seed(123)
+air_with_missing <- air_passengers
+missing_indices <- sample(1:length(air_passengers), 
+                         size = round(0.1 * length(air_passengers)))
+air_with_missing[missing_indices] <- NA
+
+cat("Number of missing values introduced:", sum(is.na(air_with_missing)), "\n")
+
+# Show how to handle missing values
+# Option 1: Linear interpolation
+air_interpolated <- na.approx(air_with_missing, na.rm = FALSE)
+
+# Option 2: Seasonal interpolation
+air_seasonal_interp <- na.interp(air_with_missing)
+
+# Compare methods
+par(mfrow = c(3, 1))
+plot(air_passengers, main = "Original Data", ylab = "Passengers")
+plot(air_interpolated, main = "Linear Interpolation", ylab = "Passengers")
+plot(air_seasonal_interp, main = "Seasonal Interpolation", ylab = "Passengers")
+par(mfrow = c(1, 1))
+
+# ==========================================
+# 9. PRACTICAL EXERCISES
+# ==========================================
+
+cat("\n=== PRACTICAL EXERCISES ===\n")
+cat("Try these exercises with the data:\n")
+cat("1. Calculate year-over-year growth rates\n")
+cat("2. Identify the fastest growing period\n")
+cat("3. Create forecasts using the trend component\n")
+cat("4. Compare different decomposition methods\n")
+
+# Exercise 1: Growth rates
+growth_rates <- diff(log(air_passengers)) * 100
+cat("\nAverage monthly growth rate:", round(mean(growth_rates), 2), "%\n")
+
+# Exercise 2: Fastest growing year
+annual_totals <- aggregate(air_passengers, by = list(floor(time(air_passengers))), sum)
+annual_growth <- diff(annual_totals$x) / annual_totals$x[-length(annual_totals$x)] * 100
+fastest_year <- annual_totals$Group.1[which.max(annual_growth) + 1]
+cat("Fastest growing year:", fastest_year, "with", round(max(annual_growth), 1), "% growth\n")
+
+# ==========================================
+# 10. SUMMARY AND LEARNING POINTS
+# ==========================================
+
+cat("\n=== SUMMARY AND LEARNING POINTS ===\n")
+cat("1. Time series decomposition separates trend, seasonal, and residual components\n")
+cat("2. Choose additive vs multiplicative based on seasonal amplitude behavior\n")
+cat("3. Residuals should be random (white noise) for good decomposition\n")
+cat("4. Missing values can be handled through interpolation methods\n")
+cat("5. Seasonal patterns help identify business cycles and planning periods\n")
+cat("6. Trend analysis reveals long-term direction and growth patterns\n")
+
+cat("\nExercise completed! Try decomposing other time series datasets.\n")
