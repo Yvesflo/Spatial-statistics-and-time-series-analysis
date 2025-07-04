@@ -1,0 +1,308 @@
+# FORECASTING AND MODEL COMPARISON - JOHNSON & JOHNSON
+# ===================================================
+# Educational exercise for advanced time series forecasting
+# Focus: Model comparison, Holt-Winters, forecast validation
+
+# Learning objectives:
+# - Compare different forecasting methods
+# - Apply Holt-Winters exponential smoothing
+# - Validate forecast accuracy
+# - Interpret forecast confidence intervals
+
+# Load required packages
+library(forecast)
+library(ggplot2)
+library(dplyr)
+
+# ===================================================
+# 1. DATA EXPLORATION
+# ===================================================
+
+# Load Johnson & Johnson quarterly earnings data
+data("JohnsonJohnson")
+jj <- JohnsonJohnson
+
+cat("=== JOHNSON & JOHNSON EARNINGS DATA ===\n")
+cat("Period:", start(jj), "to", end(jj), "\n")
+cat("Frequency:", frequency(jj), "(quarterly data)\n")
+cat("Length:", length(jj), "observations\n")
+
+# Initial visualization
+plot(jj, 
+     main = "Johnson & Johnson Quarterly Earnings",
+     xlab = "Year", 
+     ylab = "Earnings per Share ($)",
+     col = "blue", 
+     lwd = 2)
+
+# Log transformation to stabilize variance
+jj_log <- log(jj)
+plot(jj_log, 
+     main = "Log-Transformed J&J Earnings",
+     xlab = "Year", 
+     ylab = "Log(Earnings)",
+     col = "red", 
+     lwd = 2)
+
+# ===================================================
+# 2. GROWTH RATE ANALYSIS
+# ===================================================
+
+cat("\n=== GROWTH RATE ANALYSIS ===\n")
+
+# Quarterly growth rate (%)
+quarterly_growth <- diff(log(jj)) * 100
+annual_growth <- diff(log(jj), lag = 4) * 100
+
+cat("Average quarterly growth rate:", round(mean(quarterly_growth), 2), "%\n")
+cat("Average annual growth rate:", round(mean(annual_growth), 2), "%\n")
+
+# Plot growth rates
+par(mfrow = c(2, 1))
+plot(quarterly_growth, main = "Quarterly Growth Rate", 
+     ylab = "Growth Rate (%)", col = "blue")
+abline(h = mean(quarterly_growth), col = "red", lty = 2)
+
+plot(annual_growth, main = "Annual Growth Rate", 
+     ylab = "Growth Rate (%)", col = "green")
+abline(h = mean(annual_growth), col = "red", lty = 2)
+par(mfrow = c(1, 1))
+
+# ===================================================
+# 3. SEASONAL DECOMPOSITION
+# ===================================================
+
+cat("\n=== SEASONAL DECOMPOSITION ===\n")
+
+# Decompose the series
+decomp_mult <- decompose(jj, type = "multiplicative")
+plot(decomp_mult, main = "Multiplicative Decomposition")
+
+# Extract seasonal indices
+seasonal_indices <- decomp_mult$seasonal[1:4]
+names(seasonal_indices) <- c("Q1", "Q2", "Q3", "Q4")
+
+cat("Seasonal indices by quarter:\n")
+print(round(seasonal_indices, 3))
+
+# Identify peak and low quarters
+peak_quarter <- names(which.max(seasonal_indices))
+low_quarter <- names(which.min(seasonal_indices))
+cat("Peak quarter:", peak_quarter, "\n")
+cat("Low quarter:", low_quarter, "\n")
+
+# ===================================================
+# 4. DATA SPLITTING FOR VALIDATION
+# ===================================================
+
+cat("\n=== DATA SPLITTING ===\n")
+
+# Split data: use last 2 years (8 quarters) for testing
+train_size <- length(jj_log) - 8
+train_data <- window(jj_log, end = time(jj_log)[train_size])
+test_data <- window(jj_log, start = time(jj_log)[train_size + 1])
+
+cat("Training data: ", start(train_data), "to", end(train_data), "\n")
+cat("Test data: ", start(test_data), "to", end(test_data), "\n")
+cat("Training size:", length(train_data), "observations\n")
+cat("Test size:", length(test_data), "observations\n")
+
+# ===================================================
+# 5. MODEL FITTING AND COMPARISON
+# ===================================================
+
+cat("\n=== MODEL FITTING ===\n")
+
+# Model 1: ARIMA (automatic selection)
+model_arima <- auto.arima(train_data)
+cat("ARIMA model:", model_arima$arma[c(1,6,2,3,7,4,5)], "\n")
+cat("ARIMA AIC:", AIC(model_arima), "\n")
+
+# Model 2: Holt-Winters exponential smoothing
+model_hw <- HoltWinters(exp(train_data), seasonal = "multiplicative")
+cat("Holt-Winters fitted\n")
+
+# Model 3: ETS (Error, Trend, Seasonal)
+model_ets <- ets(train_data)
+cat("ETS model:", model_ets$method, "\n")
+cat("ETS AIC:", model_ets$aic, "\n")
+
+# Model 4: Simple exponential smoothing
+model_ses <- ses(train_data)
+cat("Simple exponential smoothing fitted\n")
+
+# ===================================================
+# 6. FORECAST GENERATION
+# ===================================================
+
+cat("\n=== GENERATING FORECASTS ===\n")
+
+# Generate forecasts for test period
+h <- length(test_data)
+
+forecast_arima <- forecast(model_arima, h = h)
+forecast_hw <- forecast(model_hw, h = h)
+forecast_ets <- forecast(model_ets, h = h)
+forecast_ses <- forecast(model_ses, h = h)
+
+# Note: HW forecast needs log transformation
+forecast_hw_log <- forecast_hw
+forecast_hw_log$mean <- log(forecast_hw$mean)
+
+cat("Forecasts generated for", h, "periods\n")
+
+# ===================================================
+# 7. FORECAST ACCURACY COMPARISON
+# ===================================================
+
+cat("\n=== FORECAST ACCURACY COMPARISON ===\n")
+
+# Calculate accuracy metrics
+accuracy_arima <- accuracy(forecast_arima, test_data)
+accuracy_hw <- accuracy(forecast_hw_log, test_data)
+accuracy_ets <- accuracy(forecast_ets, test_data)
+accuracy_ses <- accuracy(forecast_ses, test_data)
+
+# Create comparison table
+create_accuracy_table <- function(acc_list, model_names) {
+  # Extract test set metrics (row 2)
+  metrics <- sapply(acc_list, function(x) {
+    if(nrow(x) > 1) x[2, c("RMSE", "MAE", "MAPE", "MASE")] 
+    else x[1, c("RMSE", "MAE", "MAPE", "MASE")]
+  })
+  
+  result <- data.frame(t(metrics))
+  rownames(result) <- model_names
+  return(result)
+}
+
+accuracy_table <- create_accuracy_table(
+  list(accuracy_arima, accuracy_hw, accuracy_ets, accuracy_ses),
+  c("ARIMA", "Holt-Winters", "ETS", "Simple ES")
+)
+
+print(round(accuracy_table, 4))
+
+# Find best model for each metric
+cat("\nBest models by metric:\n")
+cat("RMSE:", rownames(accuracy_table)[which.min(accuracy_table$RMSE)], "\n")
+cat("MAE:", rownames(accuracy_table)[which.min(accuracy_table$MAE)], "\n")
+cat("MAPE:", rownames(accuracy_table)[which.min(accuracy_table$MAPE)], "\n")
+cat("MASE:", rownames(accuracy_table)[which.min(accuracy_table$MASE)], "\n")
+
+# ===================================================
+# 8. VISUALIZATION OF FORECASTS
+# ===================================================
+
+# Plot all forecasts together
+plot(jj_log, 
+     main = "Forecast Comparison - Johnson & Johnson",
+     ylab = "Log(Earnings)",
+     xlim = c(start(jj_log)[1], end(test_data)[1] + 0.5),
+     ylim = range(c(jj_log, forecast_arima$mean, forecast_ets$mean)))
+
+# Add forecasts
+lines(forecast_arima$mean, col = "red", lwd = 2)
+lines(forecast_ets$mean, col = "blue", lwd = 2)
+lines(forecast_ses$mean, col = "green", lwd = 2)
+lines(forecast_hw_log$mean, col = "purple", lwd = 2)
+
+# Add confidence intervals for ARIMA
+lines(forecast_arima$upper[,2], col = "red", lty = 2)
+lines(forecast_arima$lower[,2], col = "red", lty = 2)
+
+# Add vertical line at train/test split
+abline(v = end(train_data)[1], col = "black", lty = 2)
+
+# Legend
+legend("topleft", 
+       legend = c("Actual", "ARIMA", "ETS", "Simple ES", "Holt-Winters", "95% CI"),
+       col = c("black", "red", "blue", "green", "purple", "red"),
+       lty = c(1, 1, 1, 1, 1, 2),
+       lwd = c(1, 2, 2, 2, 2, 1))
+
+# ===================================================
+# 9. RESIDUAL ANALYSIS FOR BEST MODEL
+# ===================================================
+
+cat("\n=== RESIDUAL ANALYSIS (BEST MODEL) ===\n")
+
+# Choose best model based on MAPE (most interpretable)
+best_model_name <- rownames(accuracy_table)[which.min(accuracy_table$MAPE)]
+cat("Best model by MAPE:", best_model_name, "\n")
+
+# Analyze residuals for best model (assuming ARIMA)
+best_model <- model_arima
+checkresiduals(best_model)
+
+# Additional residual tests
+residuals_best <- residuals(best_model)
+cat("Ljung-Box test p-value:", Box.test(residuals_best, lag = 20)$p.value, "\n")
+
+# ===================================================
+# 10. FUTURE FORECASTING
+# ===================================================
+
+cat("\n=== FUTURE FORECASTING ===\n")
+
+# Refit best model on full dataset
+final_model <- auto.arima(jj_log)
+
+# Generate future forecasts (2 years ahead)
+future_forecast <- forecast(final_model, h = 8)
+
+# Plot final forecast
+plot(future_forecast, 
+     main = "Johnson & Johnson - Future Earnings Forecast",
+     ylab = "Log(Earnings)",
+     xlab = "Year")
+
+# Convert back to original scale for interpretation
+future_earnings <- exp(future_forecast$mean)
+future_lower <- exp(future_forecast$lower[,2])
+future_upper <- exp(future_forecast$upper[,2])
+
+cat("Forecast summary (next 8 quarters):\n")
+forecast_summary <- data.frame(
+  Quarter = 1:8,
+  Forecast = round(future_earnings, 2),
+  Lower_95 = round(future_lower, 2),
+  Upper_95 = round(future_upper, 2)
+)
+print(forecast_summary)
+
+# ===================================================
+# 11. FORECAST INTERPRETATION GUIDE
+# ===================================================
+
+cat("\n=== FORECAST INTERPRETATION GUIDE ===\n")
+cat("1. Point Forecast: Most likely value based on historical patterns\n")
+cat("2. Confidence Intervals: Range of uncertainty around the forecast\n")
+cat("3. MAPE < 5%: Excellent accuracy\n")
+cat("4. MAPE 5-10%: Good accuracy\n")
+cat("5. MAPE 10-20%: Reasonable accuracy\n")
+cat("6. MAPE > 20%: Poor accuracy\n")
+
+best_mape <- min(accuracy_table$MAPE)
+cat("\nBest model MAPE:", round(best_mape, 2), "%\n")
+
+if(best_mape < 5) cat("Forecast accuracy: EXCELLENT\n")
+else if(best_mape < 10) cat("Forecast accuracy: GOOD\n")
+else if(best_mape < 20) cat("Forecast accuracy: REASONABLE\n")
+else cat("Forecast accuracy: POOR\n")
+
+# ===================================================
+# 12. SUMMARY AND LEARNING POINTS
+# ===================================================
+
+cat("\n=== SUMMARY AND LEARNING POINTS ===\n")
+cat("1. Multiple models should be compared for robust forecasting\n")
+cat("2. Out-of-sample validation is crucial for model selection\n")
+cat("3. Different metrics may favor different models\n")
+cat("4. Confidence intervals communicate forecast uncertainty\n")
+cat("5. Holt-Winters works well for data with trend and seasonality\n")
+cat("6. ARIMA models are flexible and often perform well\n")
+cat("7. Simpler models (like exponential smoothing) can be competitive\n")
+cat("8. Always validate model assumptions through residual analysis\n")
+
+cat("\nExercise completed! Try forecasting with your own time series data.\n")
