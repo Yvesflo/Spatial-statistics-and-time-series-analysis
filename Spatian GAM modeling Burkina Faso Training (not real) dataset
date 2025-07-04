@@ -1,0 +1,308 @@
+# SPATIAL GAM MODELING - BURKINA FASO HEALTH DATA
+# ===============================================
+# Educational exercise for spatial generalized additive models
+# Focus: GAM with spatial terms, precipitation effects, model validation
+
+# Learning objectives:
+# - Fit GAM models with spatial smooths
+# - Include environmental covariates
+# - Choose appropriate error distributions
+# - Interpret spatial effects and model outputs
+
+# Load required packages
+library(mgcv)
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(spdep)
+
+# ===============================================
+# 1. DATA SIMULATION AND PREPARATION
+# ===============================================
+
+cat("=== SPATIAL GAM MODELING EXERCISE ===\n")
+
+# Create example health district data (simulated for educational purposes)
+set.seed(123)
+n_districts <- 63
+
+# Simulate spatial coordinates
+lon_range <- c(-5, 2)  # Approximate Burkina Faso longitude
+lat_range <- c(9, 15)   # Approximate Burkina Faso latitude
+
+example_data <- data.frame(
+  district_id = 1:n_districts,
+  district_name = paste("District", 1:n_districts),
+  longitude = runif(n_districts, lon_range[1], lon_range[2]),
+  latitude = runif(n_districts, lat_range[1], lat_range[2]),
+  population = sample(10000:100000, n_districts, replace = TRUE),
+  precipitation = runif(n_districts, 200, 1200),  # mm per year
+  elevation = runif(n_districts, 200, 800),       # meters
+  urban_rural = sample(c("Urban", "Rural"), n_districts, 
+                      replace = TRUE, prob = c(0.3, 0.7))
+)
+
+# Simulate measles cases with spatial and environmental effects
+# Higher incidence in areas with specific precipitation ranges
+spatial_effect <- sin(example_data$longitude * 0.5) + cos(example_data$latitude * 0.3)
+precip_effect <- dnorm(example_data$precipitation, 600, 200) * 2
+urban_effect <- ifelse(example_data$urban_rural == "Urban", -0.3, 0.1)
+
+# Generate cases using Poisson model
+linear_predictor <- 3.5 + spatial_effect + precip_effect + urban_effect
+expected_rate <- exp(linear_predictor) / 100000  # Rate per 100,000
+example_data$cases <- rpois(n_districts, example_data$population * expected_rate)
+
+# Calculate incidence rate per 100,000
+example_data$incidence_rate <- (example_data$cases / example_data$population) * 100000
+
+cat("Simulated data for", n_districts, "health districts\n")
+cat("Incidence rate range:", round(range(example_data$incidence_rate), 1), "per 100,000\n")
+
+# ===============================================
+# 2. EXPLORATORY DATA ANALYSIS
+# ===============================================
+
+cat("\n=== EXPLORATORY DATA ANALYSIS ===\n")
+
+# Summary statistics
+summary_stats <- example_data %>%
+  summarise(
+    mean_incidence = mean(incidence_rate),
+    median_incidence = median(incidence_rate),
+    sd_incidence = sd(incidence_rate),
+    mean_precip = mean(precipitation),
+    cases_total = sum(cases)
+  )
+
+print(summary_stats)
+
+# Visualize data distribution
+par(mfrow = c(2, 2))
+hist(example_data$incidence_rate, main = "Incidence Rate Distribution", 
+     xlab = "Rate per 100,000", col = "lightblue")
+hist(example_data$precipitation, main = "Precipitation Distribution", 
+     xlab = "Precipitation (mm)", col = "lightgreen")
+plot(example_data$precipitation, example_data$incidence_rate,
+     main = "Incidence vs Precipitation", 
+     xlab = "Precipitation (mm)", ylab = "Incidence Rate")
+boxplot(incidence_rate ~ urban_rural, data = example_data,
+        main = "Incidence by Area Type", col = c("pink", "lightgray"))
+par(mfrow = c(1, 1))
+
+# ===============================================
+# 3. DISTRIBUTION FAMILY SELECTION
+# ===============================================
+
+cat("\n=== DISTRIBUTION FAMILY SELECTION ===\n")
+
+# Check variance vs mean relationship
+mean_incidence <- mean(example_data$incidence_rate)
+var_incidence <- var(example_data$incidence_rate)
+dispersion_ratio <- var_incidence / mean_incidence
+
+cat("Mean incidence rate:", round(mean_incidence, 2), "\n")
+cat("Variance:", round(var_incidence, 2), "\n")
+cat("Dispersion ratio (Var/Mean):", round(dispersion_ratio, 2), "\n")
+
+# Distribution selection guide
+cat("\nDistribution Selection Guide:\n")
+cat("- Ratio ≈ 1: Use Poisson\n")
+cat("- Ratio > 1 (moderate): Use Quasi-Poisson\n")
+cat("- Ratio >> 1 (large): Use Negative Binomial\n")
+
+if (dispersion_ratio < 1.5) {
+  selected_family <- "poisson"
+  cat("Selected family: Poisson\n")
+} else if (dispersion_ratio < 3) {
+  selected_family <- "quasipoisson"
+  cat("Selected family: Quasi-Poisson\n")
+} else {
+  selected_family <- "nb"
+  cat("Selected family: Negative Binomial\n")
+}
+
+# ===============================================
+# 4. GAM MODEL FITTING
+# ===============================================
+
+cat("\n=== GAM MODEL FITTING ===\n")
+
+# Model 1: Simple GAM with precipitation only
+model1 <- gam(cases ~ s(precipitation) + offset(log(population)),
+              family = poisson,
+              data = example_data)
+
+cat("Model 1: Precipitation only\n")
+cat("Deviance explained:", round(summary(model1)$dev.expl * 100, 1), "%\n")
+
+# Model 2: Add spatial smooth
+model2 <- gam(cases ~ s(precipitation) + s(longitude, latitude) + offset(log(population)),
+              family = poisson,
+              data = example_data)
+
+cat("Model 2: Precipitation + Spatial smooth\n")
+cat("Deviance explained:", round(summary(model2)$dev.expl * 100, 1), "%\n")
+
+# Model 3: Add urban/rural effect
+model3 <- gam(cases ~ s(precipitation) + s(longitude, latitude) + urban_rural + offset(log(population)),
+              family = poisson,
+              data = example_data)
+
+cat("Model 3: Full model with urban/rural\n")
+cat("Deviance explained:", round(summary(model3)$dev.expl * 100, 1), "%\n")
+
+# Model comparison
+aic_comparison <- data.frame(
+  Model = c("Precipitation only", "+ Spatial", "+ Urban/Rural"),
+  AIC = c(AIC(model1), AIC(model2), AIC(model3)),
+  Dev_Explained = c(summary(model1)$dev.expl, summary(model2)$dev.expl, summary(model3)$dev.expl) * 100
+)
+
+print(aic_comparison)
+
+# ===============================================
+# 5. MODEL INTERPRETATION
+# ===============================================
+
+cat("\n=== MODEL INTERPRETATION ===\n")
+
+# Select best model (lowest AIC)
+best_model <- model3
+cat("Best model: Full model\n")
+
+# Model summary
+summary(best_model)
+
+# Plot smooth terms
+par(mfrow = c(2, 2))
+plot(best_model, pages = 1, shade = TRUE, main = "GAM Smooth Terms")
+par(mfrow = c(1, 1))
+
+# Spatial surface plot
+vis.gam(best_model, view = c("longitude", "latitude"), 
+        plot.type = "contour", main = "Spatial Effect")
+
+# ===============================================
+# 6. RESIDUAL ANALYSIS
+# ===============================================
+
+cat("\n=== RESIDUAL ANALYSIS ===\n")
+
+# Calculate residuals
+residuals_pearson <- residuals(best_model, type = "pearson")
+fitted_values <- fitted(best_model)
+
+# Plot residuals
+par(mfrow = c(2, 2))
+plot(fitted_values, residuals_pearson, 
+     main = "Residuals vs Fitted", 
+     xlab = "Fitted Values", ylab = "Pearson Residuals")
+abline(h = 0, col = "red", lty = 2)
+
+qqnorm(residuals_pearson, main = "Q-Q Plot of Residuals")
+qqline(residuals_pearson, col = "red")
+
+hist(residuals_pearson, main = "Residual Distribution", 
+     xlab = "Pearson Residuals", col = "lightblue")
+
+# Spatial plot of residuals
+plot(example_data$longitude, example_data$latitude, 
+     cex = abs(residuals_pearson), 
+     col = ifelse(residuals_pearson > 0, "red", "blue"),
+     main = "Spatial Distribution of Residuals",
+     xlab = "Longitude", ylab = "Latitude")
+legend("topright", legend = c("Positive", "Negative"), 
+       col = c("red", "blue"), pch = 1)
+par(mfrow = c(1, 1))
+
+# ===============================================
+# 7. SPATIAL AUTOCORRELATION OF RESIDUALS
+# ===============================================
+
+cat("\n=== SPATIAL AUTOCORRELATION TEST ===\n")
+
+# Convert to spatial object for autocorrelation test
+data_sf <- st_as_sf(example_data, coords = c("longitude", "latitude"), crs = 4326)
+data_sf$residuals <- residuals_pearson
+
+# Create spatial weights
+neighbors <- knearneigh(data_sf, k = 5)
+nb_list <- knn2nb(neighbors)
+weights <- nb2listw(nb_list, style = "W")
+
+# Moran's I test on residuals
+moran_residuals <- moran.test(data_sf$residuals, weights)
+cat("Moran's I on residuals:", round(moran_residuals$estimate[1], 4), "\n")
+cat("P-value:", round(moran_residuals$p.value, 4), "\n")
+
+if (moran_residuals$p.value > 0.05) {
+  cat("No significant spatial autocorrelation in residuals (good!)\n")
+} else {
+  cat("Significant spatial autocorrelation in residuals (needs improvement)\n")
+}
+
+# ===============================================
+# 8. MODEL PREDICTION AND UNCERTAINTY
+# ===============================================
+
+cat("\n=== MODEL PREDICTION ===\n")
+
+# Generate predictions with confidence intervals
+predictions <- predict(best_model, type = "link", se.fit = TRUE)
+predicted_rates <- exp(predictions$fit) / example_data$population * 100000
+se_rates <- predictions$se.fit
+
+# Calculate confidence intervals
+ci_lower <- exp(predictions$fit - 1.96 * se_rates) / example_data$population * 100000
+ci_upper <- exp(predictions$fit + 1.96 * se_rates) / example_data$population * 100000
+
+# Compare observed vs predicted
+comparison <- data.frame(
+  District = example_data$district_name[1:10],
+  Observed = round(example_data$incidence_rate[1:10], 1),
+  Predicted = round(predicted_rates[1:10], 1),
+  CI_Lower = round(ci_lower[1:10], 1),
+  CI_Upper = round(ci_upper[1:10], 1)
+)
+
+cat("Observed vs Predicted (first 10 districts):\n")
+print(comparison)
+
+# ===============================================
+# 9. PRACTICAL INTERPRETATION
+# ===============================================
+
+cat("\n=== PRACTICAL INTERPRETATION ===\n")
+
+# Extract coefficient for urban/rural effect
+urban_coef <- coef(best_model)["urban_ruralUrban"]
+risk_ratio <- exp(urban_coef)
+
+cat("Urban vs Rural Risk Ratio:", round(risk_ratio, 2), "\n")
+if (risk_ratio > 1) {
+  cat("Urban areas have", round((risk_ratio - 1) * 100, 1), "% higher risk\n")
+} else {
+  cat("Urban areas have", round((1 - risk_ratio) * 100, 1), "% lower risk\n")
+}
+
+# Precipitation effect interpretation
+precip_effect_range <- range(example_data$precipitation)
+cat("Precipitation range in data:", round(precip_effect_range), "mm\n")
+cat("Check smooth plots to see optimal precipitation levels\n")
+
+# ===============================================
+# 10. SUMMARY AND LEARNING POINTS
+# ===============================================
+
+cat("\n=== SUMMARY AND LEARNING POINTS ===\n")
+cat("1. GAMs allow flexible modeling of non-linear relationships\n")
+cat("2. Spatial smooths capture geographic clustering patterns\n")
+cat("3. Model comparison using AIC helps select best model\n")
+cat("4. Residual analysis checks model assumptions\n")
+cat("5. Test for spatial autocorrelation in residuals\n")
+cat("6. Include offset for population when modeling rates\n")
+cat("7. Choose distribution family based on variance-mean relationship\n")
+cat("8. Spatial effects often improve model fit substantially\n")
+
+cat("\nExercise completed! Try GAM modeling with your own spatial health data.\n")
