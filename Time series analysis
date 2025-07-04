@@ -1,0 +1,309 @@
+# TIME SERIES ANALYSIS N EXERCISES
+# ===========================================
+# Educational solutions to common time series problems
+# Focus: Advanced techniques, model validation, forecasting
+
+# Learning objectives:
+# - Handle different time series challenges
+# - Apply Box-Jenkins methodology
+# - Compare manual vs automatic model selection
+# - Validate model performance
+
+# Load required packages
+library(forecast)
+library(tsibble)
+library(fable)
+library(feasts)
+library(dplyr)
+library(ggplot2)
+
+# ===========================================
+# 1. ARIMA MODEL IDENTIFICATION EXERCISE
+# ===========================================
+
+cat("=== ARIMA MODEL IDENTIFICATION EXERCISE ===\n")
+
+# Simulate ARIMA(1,1,1) data for practice
+set.seed(123)
+n <- 100
+arima_sim <- arima.sim(model = list(ar = 0.7, ma = 0.3), n = n)
+arima_sim <- cumsum(arima_sim)  # Add integration
+arima_ts <- ts(arima_sim, frequency = 1)
+
+# Plot the simulated series
+plot(arima_ts, main = "Simulated ARIMA Series", 
+     ylab = "Value", col = "blue", lwd = 2)
+
+# Step 1: Check stationarity
+cat("\nStep 1: Stationarity Testing\n")
+adf_original <- adf.test(arima_ts)
+cat("ADF test p-value (original):", round(adf_original$p.value, 4), "\n")
+
+# Apply differencing
+arima_diff <- diff(arima_ts)
+adf_diff <- adf.test(arima_diff)
+cat("ADF test p-value (differenced):", round(adf_diff$p.value, 4), "\n")
+
+# Step 2: ACF and PACF analysis
+par(mfrow = c(2, 2))
+acf(arima_ts, main = "ACF - Original Series")
+pacf(arima_ts, main = "PACF - Original Series")
+acf(arima_diff, main = "ACF - Differenced Series")
+pacf(arima_diff, main = "PACF - Differenced Series")
+par(mfrow = c(1, 1))
+
+# Step 3: Model identification
+cat("\nStep 3: Model Identification\n")
+cat("Based on ACF/PACF patterns, try different models:\n")
+
+# Try different models
+models <- list()
+models$arima_101 <- Arima(arima_ts, order = c(1, 0, 1))
+models$arima_110 <- Arima(arima_ts, order = c(1, 1, 0))
+models$arima_011 <- Arima(arima_ts, order = c(0, 1, 1))
+models$arima_111 <- Arima(arima_ts, order = c(1, 1, 1))
+models$auto <- auto.arima(arima_ts)
+
+# Compare models
+model_comparison <- data.frame(
+  Model = names(models),
+  AIC = sapply(models, AIC),
+  BIC = sapply(models, BIC)
+)
+model_comparison <- model_comparison[order(model_comparison$AIC), ]
+
+cat("Model Comparison (sorted by AIC):\n")
+print(model_comparison)
+
+# ===========================================
+# 2. SEASONAL ARIMA EXERCISE
+# ===========================================
+
+cat("\n=== SEASONAL ARIMA EXERCISE ===\n")
+
+# Use built-in seasonal data
+data(co2)
+co2_ts <- co2
+
+# Basic exploration
+cat("CO2 data period:", start(co2_ts), "to", end(co2_ts), "\n")
+cat("Frequency:", frequency(co2_ts), "\n")
+
+# Plot series and its components
+plot(co2_ts, main = "Atmospheric CO2 Concentrations", 
+     ylab = "CO2 (ppm)", col = "blue", lwd = 2)
+
+# Decomposition
+decomp_co2 <- decompose(co2_ts)
+plot(decomp_co2)
+
+# Seasonal differencing
+co2_seas_diff <- diff(co2_ts, lag = frequency(co2_ts))
+co2_both_diff <- diff(co2_seas_diff)
+
+# Plot differenced series
+par(mfrow = c(3, 1))
+plot(co2_ts, main = "Original CO2 Series")
+plot(co2_seas_diff, main = "Seasonally Differenced")
+plot(co2_both_diff, main = "Both Differences Applied")
+par(mfrow = c(1, 1))
+
+# Fit seasonal ARIMA
+sarima_manual <- Arima(co2_ts, order = c(1, 1, 1), seasonal = c(1, 1, 1))
+sarima_auto <- auto.arima(co2_ts)
+
+cat("Manual SARIMA AIC:", AIC(sarima_manual), "\n")
+cat("Auto SARIMA AIC:", AIC(sarima_auto), "\n")
+cat("Auto SARIMA model:", sarima_auto$arma, "\n")
+
+# ===========================================
+# 3. FORECAST VALIDATION EXERCISE
+# ===========================================
+
+cat("\n=== FORECAST VALIDATION EXERCISE ===\n")
+
+# Use AirPassengers for validation exercise
+data(AirPassengers)
+ap <- AirPassengers
+
+# Create training and test sets
+train_size <- length(ap) - 12  # Hold out last year
+ap_train <- window(ap, end = time(ap)[train_size])
+ap_test <- window(ap, start = time(ap)[train_size + 1])
+
+cat("Training period:", start(ap_train), "to", end(ap_train), "\n")
+cat("Test period:", start(ap_test), "to", end(ap_test), "\n")
+
+# Fit models on training data
+models_ap <- list()
+models_ap$arima <- auto.arima(ap_train)
+models_ap$ets <- ets(ap_train)
+models_ap$hw <- HoltWinters(ap_train)
+
+# Generate forecasts
+forecasts_ap <- list()
+forecasts_ap$arima <- forecast(models_ap$arima, h = 12)
+forecasts_ap$ets <- forecast(models_ap$ets, h = 12)
+forecasts_ap$hw <- forecast(models_ap$hw, h = 12)
+
+# Calculate accuracy
+accuracy_results <- data.frame(
+  Model = c("ARIMA", "ETS", "Holt-Winters"),
+  RMSE = NA,
+  MAE = NA,
+  MAPE = NA
+)
+
+for (i in 1:3) {
+  acc <- accuracy(forecasts_ap[[i]], ap_test)
+  accuracy_results[i, 2:4] <- acc[2, c("RMSE", "MAE", "MAPE")]
+}
+
+cat("Out-of-sample forecast accuracy:\n")
+print(round(accuracy_results, 3))
+
+# Plot forecasts
+plot(ap, main = "Forecast Comparison - Air Passengers", 
+     ylab = "Passengers", xlim = c(1949, 1962))
+lines(forecasts_ap$arima$mean, col = "red", lwd = 2)
+lines(forecasts_ap$ets$mean, col = "blue", lwd = 2)
+lines(forecasts_ap$hw$mean, col = "green", lwd = 2)
+abline(v = end(ap_train)[1], lty = 2, col = "gray")
+legend("topleft", legend = c("Actual", "ARIMA", "ETS", "HW", "Train/Test"),
+       col = c("black", "red", "blue", "green", "gray"),
+       lty = c(1, 1, 1, 1, 2), lwd = c(1, 2, 2, 2, 1))
+
+# ===========================================
+# 4. DIAGNOSTIC CHECKING EXERCISE
+# ===========================================
+
+cat("\n=== DIAGNOSTIC CHECKING EXERCISE ===\n")
+
+# Use the best model from previous exercise
+best_model_idx <- which.min(accuracy_results$MAPE)
+best_model <- models_ap[[best_model_idx]]
+best_model_name <- accuracy_results$Model[best_model_idx]
+
+cat("Best model by MAPE:", best_model_name, "\n")
+
+# Comprehensive diagnostics
+checkresiduals(best_model)
+
+# Additional diagnostic tests
+residuals_best <- residuals(best_model)
+
+# Ljung-Box test at different lags
+ljung_results <- data.frame(
+  Lag = c(5, 10, 15, 20),
+  P_value = NA
+)
+
+for (i in 1:nrow(ljung_results)) {
+  ljung_test <- Box.test(residuals_best, lag = ljung_results$Lag[i], type = "Ljung-Box")
+  ljung_results$P_value[i] <- ljung_test$p.value
+}
+
+cat("Ljung-Box test results:\n")
+print(ljung_results)
+
+# Normality tests
+shapiro_result <- shapiro.test(residuals_best)
+cat("Shapiro-Wilk normality test p-value:", round(shapiro_result$p.value, 4), "\n")
+
+# ===========================================
+# 5. ADVANCED FORECASTING EXERCISE
+# ===========================================
+
+cat("\n=== ADVANCED FORECASTING EXERCISE ===\n")
+
+# Demonstrate ensemble forecasting
+ensemble_forecast <- (forecasts_ap$arima$mean + 
+                     forecasts_ap$ets$mean + 
+                     forecasts_ap$hw$mean) / 3
+
+# Calculate ensemble accuracy
+ensemble_acc <- accuracy(ensemble_forecast, ap_test)
+cat("Ensemble forecast MAPE:", round(ensemble_acc[1, "MAPE"], 3), "\n")
+
+# Cross-validation for model selection
+cv_function <- function(data, h = 1, window_size = 36) {
+  n <- length(data)
+  errors <- numeric(n - window_size - h + 1)
+  
+  for (i in 1:(n - window_size - h + 1)) {
+    train_window <- window(data, start = time(data)[i], 
+                          end = time(data)[i + window_size - 1])
+    test_point <- data[i + window_size + h - 1]
+    
+    model <- auto.arima(train_window)
+    forecast_val <- forecast(model, h = h)$mean[h]
+    errors[i] <- abs(test_point - forecast_val)
+  }
+  
+  return(mean(errors))
+}
+
+# Apply cross-validation (simplified version)
+cat("Running time series cross-validation...\n")
+cv_mae <- cv_function(ap_train, h = 1, window_size = 36)
+cat("Cross-validation MAE:", round(cv_mae, 3), "\n")
+
+# ===========================================
+# 6. TRANSFORMATION EXERCISE
+# ===========================================
+
+cat("\n=== TRANSFORMATION EXERCISE ===\n")
+
+# Compare models with and without transformation
+ap_log <- log(ap_train)
+
+# Fit models
+model_original <- auto.arima(ap_train)
+model_log <- auto.arima(ap_log)
+
+# Generate forecasts
+forecast_original <- forecast(model_original, h = 12)
+forecast_log <- forecast(model_log, h = 12)
+
+# Transform log forecasts back
+forecast_log_transformed <- forecast_log
+forecast_log_transformed$mean <- exp(forecast_log$mean)
+forecast_log_transformed$upper <- exp(forecast_log$upper)
+forecast_log_transformed$lower <- exp(forecast_log$lower)
+
+# Compare accuracy
+acc_original <- accuracy(forecast_original, ap_test)
+acc_log <- accuracy(forecast_log_transformed, ap_test)
+
+cat("Original scale model MAPE:", round(acc_original[2, "MAPE"], 3), "\n")
+cat("Log-transformed model MAPE:", round(acc_log[2, "MAPE"], 3), "\n")
+
+# ===========================================
+# 7. SUMMARY EXERCISE
+# ===========================================
+
+cat("\n=== EXERCISE SUMMARY ===\n")
+cat("Key learning points from exercises:\n")
+cat("1. Model identification requires careful ACF/PACF analysis\n")
+cat("2. Seasonal data needs seasonal ARIMA models\n")
+cat("3. Out-of-sample validation is crucial for model selection\n")
+cat("4. Residual diagnostics ensure model adequacy\n")
+cat("5. Ensemble methods can improve forecast accuracy\n")
+cat("6. Transformations may improve model performance\n")
+cat("7. Cross-validation provides robust model evaluation\n")
+
+# Create summary table of all exercises
+exercise_summary <- data.frame(
+  Exercise = c("ARIMA Identification", "Seasonal ARIMA", "Forecast Validation", 
+               "Diagnostics", "Advanced Forecasting", "Transformations"),
+  Key_Learning = c("ACF/PACF patterns", "Seasonal differencing", 
+                   "Out-of-sample testing", "Residual analysis",
+                   "Ensemble methods", "Log transformation"),
+  Best_Practice = c("Try multiple models", "Check for seasonality",
+                    "Hold-out validation", "Test assumptions",
+                    "Combine forecasts", "Compare transformations")
+)
+
+print(exercise_summary)
+
+cat("\nAll exercises completed! Practice with your own time series data.\n")
