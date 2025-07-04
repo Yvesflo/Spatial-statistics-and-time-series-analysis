@@ -1,0 +1,187 @@
+
+## 2. Spatial Autocorrelation Exercise
+
+```r name=spatial_autocorrelation_malaria.R
+# SPATIAL AUTOCORRELATION ANALYSIS - MALARIA INCIDENCE
+# =====================================================
+# Educational exercise for learning spatial autocorrelation concepts
+# Focus: Moran's I test, spatial weights, interpretation
+
+# Learning objectives:
+# - Calculate incidence rates from count data
+# - Create spatial weights matrices
+# - Perform Moran's I test
+# - Interpret spatial autocorrelation results
+
+# Load required packages
+library(sf)
+library(spdep)
+library(dplyr)
+library(readxl)
+
+# =====================================================
+# 1. DATA PREPARATION
+# =====================================================
+
+# Load malaria data (adapt path to your data)
+# Expected structure: health areas, population, cases by season
+# data <- read_excel("your_malaria_data.xlsx")
+
+# Example data structure creation (for demonstration)
+set.seed(123)
+example_data <- data.frame(
+  Aire_sante = paste("Area", 1:20),
+  Case_dry = rpois(20, lambda = 25),
+  Case_rainfall = rpois(20, lambda = 150),
+  population = sample(5000:25000, 20),
+  Lon = runif(20, min = -5, max = 5),
+  Lat = runif(20, min = 10, max = 15)
+)
+
+# Calculate incidence rates per 1000 population
+data <- example_data %>%
+  mutate(
+    TI_dry = round((Case_dry / population) * 1000, 0),
+    TI_rainfall = round((Case_rainfall / population) * 1000, 0)
+  )
+
+print("Data structure:")
+head(data)
+
+# =====================================================
+# 2. SPATIAL DATA CONVERSION
+# =====================================================
+
+# Convert to spatial object
+data_sf <- st_as_sf(data, coords = c("Lon", "Lat"), crs = 4326)
+
+# Display basic info
+print(paste("Number of spatial units:", nrow(data_sf)))
+print(paste("Coordinate system:", st_crs(data_sf)$input))
+
+# =====================================================
+# 3. SPATIAL WEIGHTS MATRIX
+# =====================================================
+
+# Create neighborhood matrix using k-nearest neighbors
+# k=3 means each area has 3 neighbors
+k_neighbors <- knearneigh(data_sf, k = 3)
+neighbors_knn <- knn2nb(k_neighbors)
+
+# Create spatial weights matrix
+# Style "W" means row-standardized weights
+weights <- nb2listw(neighbors_knn, style = "W")
+
+# Summary of weights
+print("Spatial weights summary:")
+summary(weights)
+
+# =====================================================
+# 4. MORAN'S I TEST
+# =====================================================
+
+# Test spatial autocorrelation for dry season
+print("=== MORAN'S I TEST - DRY SEASON ===")
+moran_dry <- moran.test(data_sf$TI_dry, weights)
+print(moran_dry)
+
+# Test spatial autocorrelation for rainfall season  
+print("=== MORAN'S I TEST - RAINFALL SEASON ===")
+moran_rain <- moran.test(data_sf$TI_rainfall, weights)
+print(moran_rain)
+
+# =====================================================
+# 5. INTERPRETATION GUIDE
+# =====================================================
+
+interpret_moran <- function(moran_result, season_name) {
+  cat("\n=== INTERPRETATION:", season_name, "===\n")
+  
+  moran_i <- moran_result$estimate[1]
+  p_value <- moran_result$p.value
+  
+  cat("Moran's I statistic:", round(moran_i, 4), "\n")
+  cat("P-value:", format(p_value, scientific = TRUE), "\n")
+  
+  # Interpretation of Moran's I value
+  if (moran_i > 0) {
+    cat("Positive spatial autocorrelation detected.\n")
+    cat("Similar values tend to cluster together.\n")
+  } else if (moran_i < 0) {
+    cat("Negative spatial autocorrelation detected.\n")
+    cat("Dissimilar values tend to be neighbors.\n")
+  } else {
+    cat("No spatial autocorrelation detected.\n")
+    cat("Random spatial pattern.\n")
+  }
+  
+  # Statistical significance
+  if (p_value < 0.05) {
+    cat("Result is statistically significant (p < 0.05).\n")
+  } else {
+    cat("Result is not statistically significant (p >= 0.05).\n")
+  }
+  
+  # Strength interpretation
+  if (abs(moran_i) < 0.3) {
+    cat("Weak spatial autocorrelation.\n")
+  } else if (abs(moran_i) < 0.7) {
+    cat("Moderate spatial autocorrelation.\n")
+  } else {
+    cat("Strong spatial autocorrelation.\n")
+  }
+}
+
+# Apply interpretation
+interpret_moran(moran_dry, "DRY SEASON")
+interpret_moran(moran_rain, "RAINFALL SEASON")
+
+# =====================================================
+# 6. ADDITIONAL ANALYSES
+# =====================================================
+
+# Local indicators of spatial association (LISA)
+# Identifies specific areas contributing to spatial autocorrelation
+lisa_dry <- localmoran(data_sf$TI_dry, weights)
+lisa_rain <- localmoran(data_sf$TI_rainfall, weights)
+
+print("Local Moran's I - areas with significant clustering:")
+print("Dry season:")
+print(which(lisa_dry[,5] < 0.05))  # Column 5 contains p-values
+
+print("Rainfall season:")
+print(which(lisa_rain[,5] < 0.05))
+
+# =====================================================
+# 7. VISUALIZATION (BASIC)
+# =====================================================
+
+# Simple plot of spatial distribution
+plot(data_sf$geometry, main = "Spatial Distribution of Health Areas")
+
+# Plot incidence rates
+plot(data_sf["TI_dry"], main = "Dry Season Incidence Rate")
+plot(data_sf["TI_rainfall"], main = "Rainfall Season Incidence Rate")
+
+# =====================================================
+# 8. SUMMARY AND LEARNING POINTS
+# =====================================================
+
+cat("\n=== SUMMARY AND LEARNING POINTS ===\n")
+cat("1. Spatial autocorrelation measures whether similar values cluster in space\n")
+cat("2. Moran's I ranges from -1 to +1:\n")
+cat("   - Positive: clustering of similar values\n")
+cat("   - Negative: clustering of dissimilar values\n")
+cat("   - Zero: random spatial pattern\n")
+cat("3. P-value tests statistical significance of the pattern\n")
+cat("4. Local Moran's I identifies specific hotspots and coldspots\n")
+cat("5. Spatial weights matrix defines 'neighborhood' relationships\n")
+
+# Optional: Save results
+# write.csv(data.frame(
+#   Season = c("Dry", "Rainfall"),
+#   Moran_I = c(moran_dry$estimate[1], moran_rain$estimate[1]),
+#   P_value = c(moran_dry$p.value, moran_rain$p.value)
+# ), "moran_results.csv", row.names = FALSE)
+
+cat("\nExercise completed! Try with your own spatial data.\n")
